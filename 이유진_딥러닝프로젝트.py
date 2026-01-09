@@ -8,9 +8,7 @@ import matplotlib.font_manager as fm
 import seaborn as sns
 import platform
 import os
-
-
-
+import requests
 
 
 # 1. 저장된 자산(모델, 스케일러, 중요도) 불러오기
@@ -25,7 +23,66 @@ try:
     model, scaler, importance_df = load_assets()
 except Exception as e:
     st.error(f"파일을 로드하는 중 오류가 발생했습니다: {e}")
+    
 
+from groq import Groq
+
+def get_llm_marketing_advice(prob, input_df):
+    
+    # 1. 주요 변수 추출 (input_df에서 바로 가져오기)
+    income = input_df['Income'].values[0]
+    spending = input_df['AdSpend'].values[0]
+    ctr = input_df['ClickThroughRate'].values[0]
+    loyalty = input_df['LoyaltyPoints'].values[0]
+    site_time = input_df['TimeOnSite'].values[0]
+    email_open = input_df['EmailOpens'].values[0]
+    prev_purchases = input_df['PreviousPurchases'].values[0]
+    
+    # 캠페인 유형 파악 (원-핫 인코딩 역추적)
+    c_type = "알 수 없음"
+    if input_df['CampaignType_Retention'].values[0] == 1: c_type = "리텐션(재구매)"
+    elif input_df['CampaignType_Conversion'].values[0] == 1: c_type = "전환 유도"
+    elif input_df['CampaignType_Consideration'].values[0] == 1: c_type = "고려 단계"
+    else: c_type = "인지도 확산"
+
+    status = "우수 유망 고객" if prob >= 0.3568 else "집중 관리 잠재 고객"
+
+    # 2. 마케팅 전문가 페르소나 주입
+    prompt = f"""
+    당신은 세계적인 데이터 기반 마케팅 전략가입니다. 
+    아래의 다차원 고객 데이터를 분석하여, 이 고객의 '구매 전환'을 즉각적으로 이끌어낼 한 문장의 전략적 솔루션을 제공하세요.
+
+    [고객 분석 데이터]
+    - 예측 등급: {status} (전환 확률 {prob*100:.1f}%)
+    - 경제적 가치: 연소득 ${income:,.0f} / 보유 로열티 포인트 {loyalty}점
+    - 캠페인 맥락: 현재 {c_type} 캠페인 진행 중 (집행 광고비 ${spending})
+    - 행동 지표: 웹사이트 체류시간 {site_time}분 / 이메일 오픈 {email_open}회 / 과거 구매 {prev_purchases}건
+    - 반응률: 클릭률(CTR) {ctr:.2f}%
+
+    [작성 가이드라인]
+    - "고객 경험을 개선하라" 같은 모호한 표현은 금지합니다.
+    - {loyalty}점의 포인트 활용이나 {email_open}회의 높은 이메일 반응 등 구체적인 숫자를 근거로 사용하세요.
+    - {c_type}이라는 캠페인 목적에 부합하는 공격적인 마케팅 액션을 제안하세요.
+    - 한국어로 단호하고 전문적인 톤으로 작성하세요.
+    """
+        
+    try:
+        # 1. Groq API 시도
+        client = Groq(api_key="KEY!!!!!") # 실제 키
+        chat_completion = client.chat.completions.create(
+            messages=[{"role": "user", "content": f"{status}를 위한 마케팅 전략 한 문장 추천해줘."}],
+            model="llama-3.1-8b-instant",
+        )
+        return chat_completion.choices[0].message.content.strip()
+
+    except Exception as e: 
+        # 2순위: API가 죽거나 에러나면 미리 준비한 문장을 내보낸다 (Fallback Path)
+        if prob >= 0.3568:
+            return "유망 고객을 위한 프리미엄 전략을 실행하세요." 
+        else:
+            return "잠재 고객을 위한 브랜드 신뢰도 향상 전략을 실행하세요."
+        
+    
 # 2. 웹 앱 상단 제목 및 성능 지표
 st.title("🎯 마케팅 전환 고객 예측 시스템")
 st.write("고객 데이터를 입력하면 최적 임계값(0.3568)을 기준으로 전환 가능성을 예측합니다.")
@@ -136,6 +193,12 @@ if st.button("결과 확인하기"):
         st.success(f"임계값을 {prob - threshold:.4f} 초과한 유망 고객입니다.")
     else:
         st.warning(f"아쉽습니다. 임계값까지 {threshold - prob:.3f}만큼 부족합니다.")
+        
+    st.markdown("---")
+    st.subheader("🤖 AI 마케팅 에이전트의 맞춤형 제언")
+    with st.spinner('LLM이 마케팅 전략을 생성 중입니다...'):
+        advice = get_llm_marketing_advice(prob, input_df)
+        st.info(f"**AI 분석 결과:** {advice}")
 
 st.markdown("---")
 
